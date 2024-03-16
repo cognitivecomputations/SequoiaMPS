@@ -1,6 +1,7 @@
 import torch
 import dataclasses
 from torch.nn.functional import softmax
+from mlx_utils import mlx_graph_for_residual, mlx_graph_for_sampling_without_replacement, mlx_graph_for_sampling_argmax, mlx_graph_for_sampling_with_replacement
 
 def get_residual(p: torch.Tensor, q:torch.Tensor):
     residual = (p - q).relu_()
@@ -106,109 +107,26 @@ def _make_causal_mask(
     mask = mask.to(dtype)
     return mask
 
-def cuda_graph_for_residual(device="cuda:0", dtype=torch.float16, dim=32000, n_warmups=3, mempool=None):
-    static_p = torch.full((dim,), 1, dtype=dtype, device=device)
-    static_q = torch.full((dim,), 0, dtype=dtype, device=device)
-
-    s = torch.cuda.Stream()
-    s.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(s):
-        for _ in range(n_warmups):
-            static_residual = get_residual(
-                    static_p,
-                    static_q
-                    )
-        s.synchronize()
-    torch.cuda.current_stream().wait_stream(s)
-
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, pool=mempool):
-         static_residual = get_residual(
-                    static_p,
-                    static_q
-                    )
-    def run(p, q):
-        static_p.copy_(p)
-        static_q.copy_(q)
-        graph.replay()
-        return static_residual.clone()
-    
-    return run
+def cuda_graph_for_residual(device="mps", dtype=torch.float16, dim=32000, n_warmups=3, mempool=None):
+    return mlx_graph_for_residual(device, dtype, dim, n_warmups, mempool )
 
 def cuda_graph_for_sampling_without_replacement(
-                device="cuda:0", dtype=torch.float16, 
+                device="mps", dtype=torch.float16, 
                 dim=32000, max_length=384, 
                 n_warmups=3, mempool=None,
                 idx_len = 8, num_samples = 16,
                 temperature = 0.6, tree_size = 64):
     
-    static_sampling_logits = torch.full((idx_len, dim), 1, dtype=dtype, device=device)
-    static_rand = torch.empty((idx_len, dim), dtype=dtype, device=device).uniform_()
-
-    
-
-    s = torch.cuda.Stream()
-    s.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(s):
-        for _ in range(n_warmups):
-            static_position = sampling_without_replacement(
-                 static_sampling_logits,
-                 static_rand,
-                 num_samples,
-                 temperature
-            )
-        s.synchronize()
-    torch.cuda.current_stream().wait_stream(s)
-
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, pool=mempool):
-        static_position = sampling_without_replacement(
-                 static_sampling_logits,
-                 static_rand,
-                 num_samples,
-                 temperature
-            )
-    def run(draft_logits, rand_vector):
-        static_sampling_logits.copy_(draft_logits)
-        static_rand.copy_(rand_vector)
-        graph.replay()
-        return static_position.clone()
-    
-    return run
+    return mlx_graph_for_sampling_without_replacement(device, dtype, dim, max_length, n_warmups, mempool, idx_len, num_samples, temperature, tree_size)
 
 def cuda_graph_for_sampling_argmax(
-                device="cuda:0", dtype=torch.float16, 
+                device="mps", dtype=torch.float16, 
                 dim=32000, max_length=384, 
                 n_warmups=3, mempool=None,
                 idx_len = 8, num_samples = 16,
                 temperature = 0.6, tree_size = 64):
     
-    static_sampling_logits = torch.full((idx_len, dim), 1, dtype=dtype, device=device)
-    
-
-    s = torch.cuda.Stream()
-    s.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(s):
-        for _ in range(n_warmups):
-            static_position = sampling_argmax(
-                 static_sampling_logits,
-                 num_samples
-            )
-        s.synchronize()
-    torch.cuda.current_stream().wait_stream(s)
-
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, pool=mempool):
-        static_position = sampling_argmax(
-                 static_sampling_logits,
-                 num_samples
-            )
-    def run(draft_logits):
-        static_sampling_logits.copy_(draft_logits)
-        graph.replay()
-        return static_position.clone()
-    
-    return run
+    return mlx_graph_for_sampling_argmax(device, dtype, dim, max_length, n_warmups, mempool, idx_len, num_samples, temperature, tree_size)
 
 
 def cuda_graph_for_sampling_with_replacement(
@@ -218,34 +136,7 @@ def cuda_graph_for_sampling_with_replacement(
                 idx_len = 8, num_samples = 16,
                 temperature = 0.6, tree_size = 64):
     
-    static_sampling_logits = torch.full((idx_len, dim), 1, dtype=dtype, device=device)
-    
-
-    s = torch.cuda.Stream()
-    s.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(s):
-        for _ in range(n_warmups):
-            static_position = sampling_with_replacement(
-                 static_sampling_logits,
-                 num_samples,
-                 temperature
-            )
-        s.synchronize()
-    torch.cuda.current_stream().wait_stream(s)
-
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, pool=mempool):
-        static_position = sampling_with_replacement(
-                 static_sampling_logits,
-                 num_samples,
-                 temperature
-            )
-    def run(draft_logits):
-        static_sampling_logits.copy_(draft_logits)
-        graph.replay()
-        return static_position.clone()
-    
-    return run
+    return mlx_graph_for_sampling_with_replacement(device, dtype, dim, max_length, n_warmups, mempool, idx_len, num_samples, temperature, tree_size)
     
         
 

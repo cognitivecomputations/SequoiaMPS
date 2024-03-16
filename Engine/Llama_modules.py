@@ -13,36 +13,29 @@ import torch
 import torch.nn.functional as F
 from typing import List, Optional, Tuple, Union
 import math
+from mlx import mx
 class LlamaRotaryEmbedding_FI(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
-
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-        # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
+        inv_freq = 1.0 / mx.power(self.base, mx.arange(0, self.dim, 2).float() / self.dim)
+        self.register_buffer('inv_freq', inv_freq, persistent=False)
+        self._set_cos_sin_cache(seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=mx.get_default_dtype())
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
-
-        freqs = torch.outer(t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+        t = mx.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+        freqs = mx.outer(t, self.inv_freq)
+        emb = mx.concatenate((freqs, freqs), axis=-1)
+        self.register_buffer('cos_cached', mx.cos(emb).astype(dtype), persistent=False)
+        self.register_buffer('sin_cached', mx.sin(emb).astype(dtype), persistent=False)
 
     def forward(self, dtype, seq_len=None):
-        return (
-            self.cos_cached[:seq_len].to(dtype=dtype),
-            self.sin_cached[:seq_len].to(dtype=dtype),
-        )
+        cos_cached = self.cos_cached[:seq_len].astype(mx.dtype_from_torch(dtype)).to_torch()
+        sin_cached = self.sin_cached[:seq_len].astype(mx.dtype_from_torch(dtype)).to_torch()
+        return (cos_cached, sin_cached)
 
 class LlamaAttention_FI(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
